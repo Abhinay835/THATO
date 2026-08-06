@@ -1,34 +1,26 @@
 """
-generate_paper.py  v5 — TAHTO  IEEE Conference Paper  (AIHC 2027)
+generate_paper.py  v6 — TAHTO  IEEE Conference Paper  (AIHC 2027)
 ==================================================================
-Generates: ../paper/TAHTO_Paper_AIHC2027.docx
-Run from:  /home/pluto/TAHTO/src/
+Uses the three original proposal diagrams:
+  - arch_three_tier.png   → System Architecture (Fig 1)
+  - arch_trust_pipeline.jpeg → Trust Prediction Pipeline (Fig 2)
+  - arch_scenarios.jpeg   → Six Evaluation Scenarios (Fig 3)
+Plus experiment result plots: Figs 4–8
 
-IEEE Conference Paper specifications followed:
-  * Page:    8.5 × 11 in,  margins 0.75/1.0/0.625/0.625
-  * Title:   24pt TNR bold, centered
-  * Authors: 11pt TNR, centered
-  * Abstract: 9pt TNR italic (Abstract-- prefix bold-italic)
-  * Sections: 10pt TNR bold all-caps, centered
-  * Sub-secs: 10pt TNR bold italic, left-aligned
-  * Body:    10pt TNR, justified, first-line indent 0.2"
-  * Captions: 9pt TNR italic (figures), 8pt TNR bold (tables)
-  * References: 8pt TNR, hanging indent 0.25"
-  * Two columns, gap = 0.5" (720 twips)
+Tables use explicit column-width control for proper alignment.
+Run from:  /home/pluto/TAHTO/src/
 """
 
 import json, sys
 from pathlib import Path
 from docx import Document
-from docx.shared import Pt, Inches, RGBColor, Twips
-from docx.enum.text  import WD_ALIGN_PARAGRAPH
+from docx.shared import Pt, Inches, Twips, RGBColor, Cm
+from docx.enum.text    import WD_ALIGN_PARAGRAPH
 from docx.enum.section import WD_SECTION
 from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Paths
-# ─────────────────────────────────────────────────────────────────────────────
+# ─── Paths ────────────────────────────────────────────────────────────────────
 HERE  = Path(__file__).parent
 FIGS  = HERE.parent / "figures"
 PAPER = HERE.parent / "paper"
@@ -36,853 +28,677 @@ PAPER.mkdir(exist_ok=True)
 RES   = HERE.parent / "results" / "results.json"
 OUT   = PAPER / "TAHTO_Paper_AIHC2027.docx"
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Load 10-seed results
-# ─────────────────────────────────────────────────────────────────────────────
-_rdata   = json.loads(RES.read_text()) if RES.exists() else {"summary": [], "seeds": []}
-SUMMARY  = {(r["scenario"], r["scheduler"]): r for r in _rdata["summary"]}
-N_SEEDS  = len(_rdata.get("seeds", []))
+# ─── Results data ─────────────────────────────────────────────────────────────
+_rd      = json.loads(RES.read_text()) if RES.exists() else {"summary":[],"seeds":[]}
+SUMMARY  = {(r["scenario"], r["scheduler"]): r for r in _rd["summary"]}
+N_SEEDS  = len(_rd.get("seeds", []))
 
-def _v(sc, sch, key, default=0):
-    return SUMMARY.get((sc, sch), {}).get(key, default)
-
+def _v(sc, sch, key):
+    return SUMMARY.get((sc, sch), {}).get(key, 0)
 def _f(sc, sch, key, d=1):
     return f"{_v(sc,sch,key):.{d}f}"
-
 def _fs(sc, sch, key, d=1):
-    m = _v(sc, sch, key); s = _v(sc, sch, key+"_std")
-    return f"{m:.{d}f} ± {s:.{d}f}"
+    m = _v(sc,sch,key); s = _v(sc,sch,key+"_std")
+    return f"{m:.{d}f}\u00b1{s:.{d}f}"
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Low-level Word helpers
-# ─────────────────────────────────────────────────────────────────────────────
-TFONT = "Times New Roman"
-MFONT = "Courier New"
-doc   = Document()
+# ─── Document setup ───────────────────────────────────────────────────────────
+TF = "Times New Roman"
+MF = "Courier New"
+doc = Document()
 
-def _marg(sec, top=0.75, bot=1.0, lft=0.625, rgt=0.625):
-    sec.top_margin    = Inches(top)
-    sec.bottom_margin = Inches(bot)
-    sec.left_margin   = Inches(lft)
-    sec.right_margin  = Inches(rgt)
+def _marg(sec):
+    sec.top_margin=Inches(0.75); sec.bottom_margin=Inches(1.0)
+    sec.left_margin=Inches(0.625); sec.right_margin=Inches(0.625)
 
 def _cols(sec, n, gap=720):
     sp = sec._sectPr
-    for old in sp.findall(qn("w:cols")):
-        sp.remove(old)
-    el = OxmlElement("w:cols")
-    el.set(qn("w:num"), str(n))
-    if n > 1:
-        el.set(qn("w:space"), str(gap))
+    for old in sp.findall(qn("w:cols")): sp.remove(old)
+    el = OxmlElement("w:cols"); el.set(qn("w:num"), str(n))
+    if n > 1: el.set(qn("w:space"), str(gap))
     sp.append(el)
 
-_marg(doc.sections[0]);  _cols(doc.sections[0], 1)
+_marg(doc.sections[0]); _cols(doc.sections[0], 1)
 
-def _new_sec(n):
-    s = doc.add_section(WD_SECTION.CONTINUOUS)
-    _marg(s); _cols(s, n); return s
+def _sec(n):
+    s = doc.add_section(WD_SECTION.CONTINUOUS); _marg(s); _cols(s, n); return s
 
-def _R(run, size=10, bold=False, italic=False, caps=False, ul=False, font=TFONT):
-    run.font.name     = font
-    run.font.size     = Pt(size)
-    run.font.bold     = bold
-    run.font.italic   = italic
-    run.font.all_caps = caps
-    if ul: run.font.underline = True
+# ─── Typography helpers ────────────────────────────────────────────────────────
+def _r(run, sz=10, b=False, i=False, caps=False, font=TF):
+    run.font.name=font; run.font.size=Pt(sz)
+    run.font.bold=b; run.font.italic=i; run.font.all_caps=caps
 
-def _P(text="", align=WD_ALIGN_PARAGRAPH.JUSTIFY, size=10,
-       bold=False, italic=False, caps=False,
-       before=0, after=4, indent=0.20, font=TFONT):
-    p = doc.add_paragraph()
-    p.alignment = align
-    pf = p.paragraph_format
-    pf.space_before = Pt(before); pf.space_after = Pt(after)
-    if indent: pf.first_line_indent = Inches(indent)
+def _p(text="", align=WD_ALIGN_PARAGRAPH.JUSTIFY, sz=10, b=False, i=False,
+       caps=False, before=0, after=4, indent=0.20, font=TF):
+    p = doc.add_paragraph(); p.alignment=align
+    pf=p.paragraph_format; pf.space_before=Pt(before); pf.space_after=Pt(after)
+    if indent: pf.first_line_indent=Inches(indent)
     if text:
-        r = p.add_run(text)
-        _R(r, size=size, bold=bold, italic=italic, caps=caps, font=font)
+        r=p.add_run(text); _r(r, sz=sz, b=b, i=i, caps=caps, font=font)
     return p
 
-def B(text):   return _P(text)
-def B0(text):  return _P(text, indent=0)
-def C(text, size=10, bold=False, italic=False, before=0, after=4):
-    return _P(text, align=WD_ALIGN_PARAGRAPH.CENTER, size=size,
-              bold=bold, italic=italic, before=before, after=after, indent=0)
+def B(t):   return _p(t)
+def B0(t):  return _p(t, indent=0)
+def C(t,sz=10,b=False,i=False,bef=0,aft=4): return _p(t,WD_ALIGN_PARAGRAPH.CENTER,sz,b,i,before=bef,after=aft,indent=0)
 
-def SH(text, before=12, after=4):
-    """IEEE section heading: centered, bold, ALL CAPS."""
-    p = doc.add_paragraph()
-    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    p.paragraph_format.space_before = Pt(before)
-    p.paragraph_format.space_after  = Pt(after)
-    r = p.add_run(text)
-    _R(r, size=10, bold=True, caps=True)
+def SH(t, bef=12, aft=4):          # IEEE section head: centered, bold, ALL-CAPS
+    p=doc.add_paragraph(); p.alignment=WD_ALIGN_PARAGRAPH.CENTER
+    p.paragraph_format.space_before=Pt(bef); p.paragraph_format.space_after=Pt(aft)
+    r=p.add_run(t); _r(r, sz=10, b=True, caps=True)
 
-def SSH(text, before=7, after=3):
-    """IEEE subsection heading: left-aligned, bold italic."""
-    p = doc.add_paragraph()
-    p.alignment = WD_ALIGN_PARAGRAPH.LEFT
-    p.paragraph_format.space_before = Pt(before)
-    p.paragraph_format.space_after  = Pt(3)
-    r = p.add_run(text)
-    _R(r, size=10, bold=True, italic=True)
+def SSH(t, bef=7):                  # IEEE sub-section: left, bold-italic
+    p=doc.add_paragraph(); p.alignment=WD_ALIGN_PARAGRAPH.LEFT
+    p.paragraph_format.space_before=Pt(bef); p.paragraph_format.space_after=Pt(3)
+    r=p.add_run(t); _r(r, sz=10, b=True, i=True)
 
 def EQ(text, label=""):
-    """Centered equation in monospace."""
-    p = doc.add_paragraph()
-    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    p.paragraph_format.space_before = Pt(3)
-    p.paragraph_format.space_after  = Pt(3)
-    r = p.add_run(text if not label else f"{text}  ({label})")
-    _R(r, size=9, font=MFONT)
+    p=doc.add_paragraph(); p.alignment=WD_ALIGN_PARAGRAPH.CENTER
+    p.paragraph_format.space_before=Pt(3); p.paragraph_format.space_after=Pt(3)
+    txt = f"{text}   ({label})" if label else text
+    r=p.add_run(txt); _r(r, sz=9, font=MF)
 
-def BLT(text):
-    """Bullet/list item with hanging-style indent."""
-    return _P(text, indent=0.25, after=2)
+def BLT(t): return _p(t, indent=0.25, after=2)
 
 def FIG(fname, caption, width=6.5):
-    """Switch to 1-col → embed figure + caption → back to 2-col."""
     path = FIGS / fname
     if not path.exists():
-        print(f"  [WARN] missing figure: {path}", file=sys.stderr); return
-    _new_sec(1)
-    p = doc.add_paragraph()
-    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    p.paragraph_format.space_before = Pt(6)
-    p.paragraph_format.space_after  = Pt(0)
+        print(f"  [WARN] missing: {path}", file=sys.stderr); return
+    _sec(1)
+    p=doc.add_paragraph(); p.alignment=WD_ALIGN_PARAGRAPH.CENTER
+    p.paragraph_format.space_before=Pt(6); p.paragraph_format.space_after=Pt(0)
     p.add_run().add_picture(str(path), width=Inches(width))
-    fc = doc.add_paragraph()
-    fc.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    fc.paragraph_format.space_before = Pt(3)
-    fc.paragraph_format.space_after  = Pt(10)
-    r = fc.add_run(caption); _R(r, size=9, italic=True)
-    _new_sec(2)
+    fc=doc.add_paragraph(); fc.alignment=WD_ALIGN_PARAGRAPH.CENTER
+    fc.paragraph_format.space_before=Pt(3); fc.paragraph_format.space_after=Pt(10)
+    _r(fc.add_run(caption), sz=9, i=True)
+    _sec(2)
 
-def TCAP(text):
-    p = doc.add_paragraph()
-    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    p.paragraph_format.space_before = Pt(8)
-    p.paragraph_format.space_after  = Pt(3)
-    r = p.add_run(text); _R(r, size=8, bold=True)
+# ─── Table helper with explicit column widths ─────────────────────────────────
+def set_col_width(cell, width_inches):
+    tc = cell._tc; tcPr = tc.get_or_add_tcPr()
+    for old in tcPr.findall(qn("w:tcW")): tcPr.remove(old)
+    tcW = OxmlElement("w:tcW")
+    tcW.set(qn("w:w"), str(int(width_inches * 1440)))   # twips
+    tcW.set(qn("w:type"), "dxa")
+    tcPr.append(tcW)
 
-def TBL(caption, headers, rows):
-    TCAP(caption)
-    t = doc.add_table(rows=1+len(rows), cols=len(headers))
+def TBL(caption, headers, rows, col_widths=None):
+    # Caption above (IEEE)
+    p=doc.add_paragraph(); p.alignment=WD_ALIGN_PARAGRAPH.CENTER
+    p.paragraph_format.space_before=Pt(10); p.paragraph_format.space_after=Pt(3)
+    _r(p.add_run(caption), sz=8, b=True)
+
+    ncols = len(headers)
+    t = doc.add_table(rows=1+len(rows), cols=ncols)
     t.style = "Table Grid"
+
+    # Default equal-width if not specified (total usable ≈ 6.75" for two-col)
+    usable = 6.75
+    if col_widths is None:
+        col_widths = [usable / ncols] * ncols
+
+    # Header row
+    hr = t.rows[0]
+    hr.height = Pt(16)
     for i, h in enumerate(headers):
-        c = t.rows[0].cells[i]; c.text = h
+        c = hr.cells[i]; c.text = h
+        set_col_width(c, col_widths[i])
         c.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
         for r in c.paragraphs[0].runs:
-            r.font.name=TFONT; r.font.size=Pt(8); r.font.bold=True
-    for ri, row in enumerate(rows):
-        for ci, val in enumerate(row):
-            c = t.rows[ri+1].cells[ci]; c.text = str(val)
+            r.font.name=TF; r.font.size=Pt(8); r.font.bold=True
+        # Light-grey background for header
+        shd = OxmlElement("w:shd")
+        shd.set(qn("w:val"), "clear")
+        shd.set(qn("w:color"), "auto")
+        shd.set(qn("w:fill"), "D9D9D9")
+        c._tc.get_or_add_tcPr().append(shd)
+
+    # Data rows
+    for ri, row_data in enumerate(rows):
+        row = t.rows[ri+1]
+        for ci, val in enumerate(row_data):
+            c = row.cells[ci]; c.text = str(val)
+            set_col_width(c, col_widths[ci])
+            # alternating row shading
+            if ri % 2 == 1:
+                shd = OxmlElement("w:shd")
+                shd.set(qn("w:val"), "clear"); shd.set(qn("w:color"), "auto")
+                shd.set(qn("w:fill"), "F5F5F5")
+                c._tc.get_or_add_tcPr().append(shd)
             c.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.LEFT
             for r in c.paragraphs[0].runs:
-                r.font.name=TFONT; r.font.size=Pt(8)
-    _P(after=6, indent=0)
+                r.font.name=TF; r.font.size=Pt(8)
+    _p(after=8, indent=0)
 
 def ALGO(title, lines):
-    """Algorithm pseudocode box."""
-    p = doc.add_paragraph()
-    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    p.paragraph_format.space_before = Pt(8)
-    p.paragraph_format.space_after  = Pt(2)
-    r = p.add_run(title); _R(r, size=9, bold=True)
-    t = doc.add_table(rows=len(lines), cols=1)
-    t.style = "Table Grid"
+    p=doc.add_paragraph(); p.alignment=WD_ALIGN_PARAGRAPH.CENTER
+    p.paragraph_format.space_before=Pt(8); p.paragraph_format.space_after=Pt(2)
+    _r(p.add_run(title), sz=9, b=True)
+    t=doc.add_table(rows=len(lines), cols=1); t.style="Table Grid"
     for i, line in enumerate(lines):
-        cell = t.rows[i].cells[0]
-        cell.text = line
+        cell=t.rows[i].cells[0]; cell.text=line
+        set_col_width(cell, 6.75)
         for r in cell.paragraphs[0].runs:
-            r.font.name = MFONT; r.font.size = Pt(8)
-        cell.paragraphs[0].paragraph_format.space_before = Pt(0)
-        cell.paragraphs[0].paragraph_format.space_after  = Pt(0)
-    _P(after=6, indent=0)
+            r.font.name=MF; r.font.size=Pt(8)
+        cell.paragraphs[0].paragraph_format.space_before=Pt(0)
+        cell.paragraphs[0].paragraph_format.space_after=Pt(0)
+    _p(after=8, indent=0)
 
 def REF(text):
-    p = doc.add_paragraph()
-    p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
-    p.paragraph_format.space_before     = Pt(0)
-    p.paragraph_format.space_after      = Pt(3)
-    p.paragraph_format.left_indent       = Inches(0.25)
-    p.paragraph_format.first_line_indent = Inches(-0.25)
-    r = p.add_run(text); _R(r, size=8)
+    p=doc.add_paragraph(); p.alignment=WD_ALIGN_PARAGRAPH.JUSTIFY
+    p.paragraph_format.space_before=Pt(0); p.paragraph_format.space_after=Pt(3)
+    p.paragraph_format.left_indent=Inches(0.25); p.paragraph_format.first_line_indent=Inches(-0.25)
+    _r(p.add_run(text), sz=8)
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  PAPER CONTENT
-# ─────────────────────────────────────────────────────────────────────────────
+# ═════════════════════════════════════════════════════════════════════════════
+#  PAPER BODY
+# ═════════════════════════════════════════════════════════════════════════════
 
-# ═══════════════════════════════ TITLE ═══════════════════════════════════════
-p = doc.add_paragraph()
-p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-p.paragraph_format.space_before = Pt(0)
-p.paragraph_format.space_after  = Pt(6)
-r = p.add_run("TAHTO: A Trust-Aware Hybrid Task Offloading Framework\n"
-              "for Secure IoMT Edge–Cloud Healthcare Systems")
-_R(r, size=22, bold=True)
+# ─── TITLE ───────────────────────────────────────────────────────────────────
+p=doc.add_paragraph(); p.alignment=WD_ALIGN_PARAGRAPH.CENTER
+p.paragraph_format.space_before=Pt(0); p.paragraph_format.space_after=Pt(6)
+_r(p.add_run("TAHTO: A Trust-Aware Hybrid Task Offloading Framework\n"
+             "for Secure IoMT Edge\u2013Cloud Healthcare Systems"), sz=20, b=True)
 
-C("[Author Name]", size=11, after=2)
-C("[Department, Institution, City, Country]", size=10, italic=True, after=1)
-C("[email@institution.edu]", size=10, italic=True, after=12)
+C("[Author Name]", sz=11, aft=2)
+C("[Department, Institution, City, Country]", sz=10, i=True, aft=1)
+C("[email@institution.edu]", sz=10, i=True, aft=12)
 
-# ═══════════════════════════ ABSTRACT ════════════════════════════════════════
-p = doc.add_paragraph()
-p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
-p.paragraph_format.space_before = Pt(0)
-p.paragraph_format.space_after  = Pt(4)
-p.paragraph_format.first_line_indent = Inches(0)
-r1 = p.add_run("Abstract\u2014"); _R(r1, size=9, bold=True, italic=True)
-r2 = p.add_run(
-    "The Internet of Medical Things (IoMT) generates latency-sensitive streams "
-    "of patient data requiring concurrent low-latency processing and robust "
-    "security guarantees. Edge-cloud computational offloading addresses device-level "
-    "resource constraints, yet existing frameworks implicitly trust all edge nodes, "
-    "leaving medical workloads exposed to Byzantine failures, node spoofing, "
-    "data-injection attacks, and resource exhaustion. This paper presents TAHTO "
-    "(Trust-Aware Hybrid Task Offloading), a framework that (i) continuously "
-    "predicts edge-node trustworthiness from a 9-dimensional real-time telemetry "
-    "vector using an online-adaptive XGBoost classifier, and (ii) integrates trust "
-    "scores into a formal min-max-normalised multi-objective scheduling function "
-    "alongside latency, energy, and QoS objectives. TAHTO enforces a hard trust "
-    "gate (T(n) < 0.50), a stricter threshold for High-sensitivity tasks "
-    "(T(n) < 0.70), and triggers bandwidth-aware cloud escalation under queue "
-    "saturation. Evaluated over 10 independent random seeds across six adversarial "
-    "scenarios against three baselines, TAHTO achieves 99.78% malicious-node "
-    "avoidance in the pure-attack scenario (S5) and 98.08% in the combined worst-case "
-    "(S6) where 40% of active nodes are simultaneously compromised. Scheduling "
-    "overhead remains below 25 \u00b5s per task. The complete, reproducible simulation "
-    "codebase is publicly available."
-); _R(r2, size=9, italic=False)
+# ─── ABSTRACT ────────────────────────────────────────────────────────────────
+p=doc.add_paragraph(); p.alignment=WD_ALIGN_PARAGRAPH.JUSTIFY
+p.paragraph_format.space_after=Pt(4)
+r1=p.add_run("Abstract\u2014"); _r(r1, sz=9, b=True, i=True)
+r2=p.add_run(
+    "The Internet of Medical Things (IoMT) generates latency-sensitive streams of "
+    "patient data requiring concurrent low-latency processing and strong security guarantees. "
+    "Edge-cloud offloading frameworks address device-level resource constraints, yet existing "
+    "approaches implicitly trust all edge nodes, exposing medical workloads to Byzantine "
+    "failures, node spoofing, data-injection attacks, and resource exhaustion. This paper "
+    "presents TAHTO (Trust-Aware Hybrid Task Offloading), a framework that continuously "
+    "predicts edge-node trustworthiness from a 9-dimensional real-time telemetry vector "
+    "using an online-adaptive XGBoost classifier, and integrates trust scores into a formal "
+    "min-max-normalised multi-objective scheduling function. TAHTO enforces a hard trust "
+    "gate (T(n)\u202f<\u202f0.50), a stricter High-sensitivity threshold (T(n)\u202f<\u202f0.70), "
+    "and bandwidth-aware cloud escalation under queue saturation. Evaluated over 10 "
+    "independent seeds across six adversarial scenarios against three baselines, TAHTO "
+    "achieves 99.78% malicious-node avoidance in pure-attack conditions and 98.08% "
+    "in the combined worst-case scenario where 40% of active nodes are simultaneously "
+    "compromised, compared to 69.5% for all non-cloud baselines. Scheduling overhead "
+    "remains below 25\u202f\u00b5s per task. The complete reproducible codebase is publicly available."
+); _r(r2, sz=9)
 
-p2 = doc.add_paragraph()
-p2.paragraph_format.space_after = Pt(14)
-r = p2.add_run("Index Terms\u2014"); _R(r, size=9, bold=True, italic=True)
-r2 = p2.add_run(
+p2=doc.add_paragraph(); p2.paragraph_format.space_after=Pt(14)
+_r(p2.add_run("Index Terms\u2014"), sz=9, b=True, i=True)
+_r(p2.add_run(
     "IoMT, task offloading, trust management, edge computing, XGBoost, "
-    "adaptive machine learning, healthcare security, cloud escalation, zero-trust."
-); _R(r2, size=9, italic=True)
+    "online adaptive learning, healthcare security, cloud escalation, zero-trust architecture."
+), sz=9, i=True)
 
-# ═══════════════════════ TWO-COLUMN BODY ════════════════════════════════════
-_new_sec(2)
+# ═════════════ SWITCH TO TWO COLUMNS ════════════════════════════════════════
+_sec(2)
 
-# ═════════════════════ I. INTRODUCTION ══════════════════════════════════════
+# ─── I. INTRODUCTION ─────────────────────────────────────────────────────────
 SH("I.  Introduction")
-B("The proliferation of Internet of Medical Things (IoMT) devices — wearable "
-  "biosensors, implantable monitors, portable diagnostic instruments, and smart "
-  "infusion pumps — is fundamentally reshaping healthcare delivery by enabling "
-  "continuous, real-time patient monitoring outside hospital walls [1]. However, "
-  "the computational requirements of the data-processing pipelines these devices "
-  "feed into (biosignal filtering, anomaly detection, AI-assisted diagnosis, "
-  "and medication decision support) vastly exceed what is achievable on "
-  "resource-constrained IoMT hardware.")
+B("The proliferation of Internet of Medical Things (IoMT) devices\u2014wearable "
+  "biosensors, implantable cardiac monitors, portable diagnostic instruments, and "
+  "smart infusion pumps\u2014is enabling continuous patient monitoring outside "
+  "hospital walls [1]. The data-processing pipelines these devices feed "
+  "(biosignal filtering, anomaly detection, AI-assisted diagnosis) demand "
+  "computational resources that far exceed what resource-constrained IoMT "
+  "hardware can provide on-device.")
 B("Computational offloading to hierarchical edge-cloud infrastructures provides "
-  "the necessary compute capacity while preserving the low-latency response "
-  "critical for clinical safety [2, 3]. Edge nodes — geographically proximate "
-  "to patients — handle time-sensitive processing locally; the cloud absorbs "
-  "compute-intensive analytics and archival workloads. This hybrid arrangement "
-  "delivers both latency efficiency and elastic scalability.")
-B("However, edge nodes in clinical environments are systematically underprotected. "
-  "Unlike centralised cloud data centres with comprehensive physical and logical "
-  "security controls, edge nodes may be deployed in unsecured corridors, ward "
-  "utility rooms, or portable carts — making them targets for physical tampering, "
-  "credential theft, malware implantation, and Byzantine compromise. A compromised "
-  "edge node that silently corrupts ECG analysis outputs, falsifies drug-dosage "
-  "recommendations, or spoofs a trusted gateway identity creates life-threatening "
-  "risk that latency-optimisation frameworks alone cannot prevent [5].")
-B("Existing offloading literature focuses almost exclusively on optimising "
-  "latency, energy, and QoS under the assumption that all edge nodes are honest "
-  "and functional. Static reputation systems assign fixed trustworthiness scores "
-  "computed from historical data that cannot adapt after an attack onset. Pure "
-  "zero-trust approaches eliminate the security risk by routing everything to "
-  "the cloud, but sacrifice the latency advantage that motivates edge deployment "
-  "in the first place [4, 6]. Neither approach is acceptable for real-world "
-  "clinical IoMT systems that simultaneously demand low latency and zero tolerance "
-  "for compromised data.")
-B("This paper presents TAHTO (Trust-Aware Hybrid Task Offloading), which bridges "
-  "this security-performance gap through three interlocking mechanisms: "
-  "(a) an online-adaptive XGBoost classifier that continuously predicts node "
-  "trustworthiness from real-time telemetry and retrains after each monitoring "
-  "window so it adapts as attack patterns evolve; "
-  "(b) a formal min-max-normalised multi-objective scheduling score that "
-  "integrates trust with latency, energy, and QoS in a principled, "
-  "weight-interpretable way; and "
-  "(c) a bandwidth-aware cloud escalation policy triggered by trust gate failure "
-  "or queue saturation, preventing hot-spotting in worst-case adversarial scenarios.")
-B("The main contributions of this paper are:")
+  "the needed compute capacity while preserving low latency [2, 3]. Edge nodes "
+  "handle time-sensitive processing locally; the cloud absorbs data-intensive "
+  "analytics and archival workloads. However, edge nodes in clinical environments "
+  "are systematically under-protected: deployed in unsecured corridors or ward "
+  "rooms, they face physical tampering, credential theft, and malware, creating "
+  "life-threatening risk when compromised nodes silently corrupt diagnostic "
+  "outputs or falsify medication recommendations [5].")
+B("Existing offloading frameworks optimise latency, energy, and QoS assuming "
+  "all edge nodes are honest. Static reputation systems assign fixed scores "
+  "that cannot adapt after attack onset. Pure zero-trust approaches route "
+  "everything to the cloud, eliminating the latency advantage that justifies "
+  "edge deployment [4, 6]. TAHTO bridges this gap with three mechanisms: "
+  "(a) an online-adaptive XGBoost trust classifier that retrains after each "
+  "monitoring window; (b) a min-max-normalised multi-objective scheduling score; "
+  "and (c) bandwidth-aware cloud escalation triggered by trust gate failure "
+  "or queue saturation. Contributions:")
 for c in [
-    "(1) A formal scheduling objective (Eq. 1) with min-max normalisation, jointly "
-    "optimising latency, energy, QoS, and real-time trust with tunable, interpretable weights.",
-    "(2) An online-adaptive trust prediction pipeline: initial XGBoost training "
-    "on a historical calibration dataset, followed by periodic retraining on completed "
-    "monitoring windows, enabling adaptation after delayed-onset attacks.",
-    "(3) A bandwidth-aware cloud escalation policy that prevents queue hot-spotting "
-    "on the sole trusted node under combined failure and adversarial conditions.",
-    "(4) Rigorous multi-seed statistical evaluation (10 seeds) across six structured "
-    "adversarial scenarios reporting mean \u00b1 SD for all metrics.",
-    "(5) A fully reproducible, open-source Python discrete-event simulation "
-    "codebase with documented experimental protocol.",
+    "(1) Formal scheduling objective with min-max normalisation (Eq.\u202f2), "
+    "jointly optimising latency, energy, QoS, and real-time trust.",
+    "(2) Online-adaptive XGBoost trust pipeline with evaluate-before-retrain "
+    "protocol for honest online generalisation metrics.",
+    "(3) Bandwidth-aware cloud escalation preventing hot-spotting on the "
+    "sole trusted node under combined adversarial conditions.",
+    "(4) Rigorous multi-seed statistical evaluation (n=10) across six structured "
+    "adversarial scenarios reporting mean\u00b1SD for all metrics.",
+    "(5) Fully reproducible open-source Python discrete-event simulation codebase.",
 ]: BLT(c)
 
-# ═════════════════════ II. RELATED WORK ════════════════════════════════════
+# ─── II. RELATED WORK ────────────────────────────────────────────────────────
 SH("II.  Related Work")
-
-SSH("A.  Task Offloading in Mobile and IoMT Edge Computing")
-B("Computational offloading for mobile and IoT devices has been extensively "
-  "studied. Chen et al. [2] proposed an efficient multi-user offloading framework "
-  "for mobile-edge computing, demonstrating significant latency and energy reductions "
-  "through formulation as a mixed-integer programming problem. Mao et al. [3] "
-  "provided a comprehensive survey of mobile edge computing from the communication "
-  "perspective, establishing the foundational latency-bandwidth-compute trade-off "
-  "models that subsequent work — including this paper — builds upon.")
-B("Within the IoMT domain, the baseline framework of Khan et al. [Base] "
-  "combines Genetic Algorithms (GA), Particle Swarm Optimisation (PSO), and "
-  "Graph Neural Networks (GNNs) to minimise latency and energy in "
-  "healthcare edge-cloud deployments. While demonstrating strong optimisation "
-  "performance, this work — like virtually all offloading literature — assumes "
-  "all edge nodes are benign and fully operational, leaving a fundamental "
-  "security gap in adversarial clinical deployments.")
-
-SSH("B.  Trust Management in IoT and Edge Systems")
-B("Khan et al. [4] conducted a comprehensive survey of trust management in "
-  "Social IoT, identifying reputation-based systems as the dominant paradigm. "
-  "These systems assign trustworthiness scores based on historical interaction "
-  "records, social relationships, or peer recommendations. A critical limitation "
-  "identified across this literature is that static reputation scores cannot "
-  "adapt after an attack onset — a node that was legitimate yesterday may be "
-  "compromised today, yet its score remains high.")
-B("Dynamic trust models that update scores from real-time monitoring data "
-  "have been proposed in isolated contexts (e.g., network intrusion detection, "
-  "vehicular networks), but their integration into task-scheduling frameworks "
-  "for healthcare edge computing remains unexplored.")
-
-SSH("C.  Zero-Trust Architectures and ML-Based Security")
-B("NIST Special Publication 800-207 [6] formalises the Zero-Trust Architecture "
-  "(ZTA) principle: no implicit trust is granted to any resource, including "
-  "internal network nodes. ZTA mandates continuous verification, least-privilege "
-  "access, and assume-breach posture. Applied to edge computing, a strict ZTA "
-  "would route all sensitive workloads to the cloud, eliminating the latency "
-  "benefit of edge deployment. TAHTO realises a pragmatic ZTA: continuous "
-  "per-node verification is enforced, but trusted nodes are still leveraged "
-  "for efficient local processing.")
-B("Zhang et al. [7] demonstrated that XGBoost achieves sub-millisecond inference "
-  "for network intrusion detection with high accuracy, making it suitable for "
-  "real-time integration into edge-layer security systems. This paper applies "
-  "XGBoost specifically to edge-node trust scoring, extending it with online "
-  "retraining to handle temporal concept drift from delayed-onset attacks.")
-
-SSH("D.  Research Gap")
-B("No existing work simultaneously addresses all of: (i) online-adaptive ML-based "
-  "trust prediction that updates after attack onset; (ii) formal, normalised "
-  "integration of trust into a multi-objective task scheduler; (iii) adaptive "
-  "cloud escalation under combined node failure and adversarial conditions; and "
-  "(iv) rigorous multi-seed statistical evaluation across diverse adversarial "
+SSH("A.  Task Offloading in IoMT")
+B("Khan et al. [Base] combined GA, PSO, and GNNs to minimise latency and energy "
+  "in IoMT edge-cloud systems, demonstrating strong optimisation but assuming "
+  "all edge nodes are benign. Chen et al. [2] formulated multi-user offloading "
+  "as a mixed-integer program; Mao et al. [3] surveyed mobile edge computing "
+  "communication trade-offs. Both establish latency-bandwidth-compute models "
+  "this paper builds upon, but neither addresses node-level trustworthiness.")
+SSH("B.  Trust Management and Zero-Trust")
+B("Khan et al. [4] surveyed Social IoT trust, identifying reputation-based "
+  "systems as the dominant paradigm. Critical limitation: static scores cannot "
+  "adapt after attack onset. NIST SP\u202f800-207 [6] formalises Zero-Trust as "
+  "continuous per-resource verification. Zhang et al. [7] demonstrated "
+  "XGBoost for sub-millisecond network intrusion detection. TAHTO applies "
+  "XGBoost to edge-node trust scoring with online retraining to handle "
+  "temporal concept drift from delayed-onset attacks\u2014not addressed "
+  "by federated IoT surveys [8].")
+SSH("C.  Research Gap")
+B("No existing work simultaneously addresses: (i) online-adaptive ML trust "
+  "prediction updating after attack onset; (ii) formal integration into a "
+  "normalised multi-objective scheduler; (iii) adaptive cloud escalation under "
+  "combined node failure and adversarial conditions; and (iv) rigorous "
+  f"multi-seed ({N_SEEDS}-seed) statistical evaluation across six adversarial "
   "scenarios. TAHTO closes all four gaps.")
 
-# ═══════════════════════ III. THREAT MODEL ═════════════════════════════════
+# ─── III. THREAT MODEL ────────────────────────────────────────────────────────
 SH("III.  Threat Model")
-
-B("We model an IoMT edge-cloud environment comprising M=50 IoMT endpoint devices "
-  "offloading tasks to N=5 heterogeneous edge nodes and one trusted cloud server. "
-  "The adversary is a bounded, node-level attacker with the following capabilities "
-  "and constraints:")
-BLT("Capability: Can compromise at most 2 of 5 edge nodes.")
-BLT("Capability: Can execute any of the four attack types in Table I.")
-BLT("Constraint: Cannot compromise the cloud server (which operates within a "
-    "secure data centre with full authentication, physical controls, and audit logging).")
-BLT("Constraint: Attacks on the transmission channel (man-in-the-middle, "
-    "packet injection) are out of scope; TAHTO defends at the compute layer.")
-BLT("Realism: In S5 and S6, attackers are initially benign for 20 s, then switch "
-    "to adversarial behaviour, modelling realistic slow-onset compromise "
-    "(e.g., malware activation, credential rotation, delayed command-and-control).")
+B("We model M=50 IoMT devices offloading tasks to N=5 heterogeneous edge nodes "
+  "and one trusted cloud server. The adversary controls at most 2 of 5 nodes "
+  "and may execute any attack in Table\u202fI. In S5 and S6, attackers behave "
+  "normally for the first 20\u202fs then switch to adversarial behaviour, "
+  "modelling realistic delayed-onset compromise. The cloud server is "
+  "unconditionally trusted (secure data centre, full authentication). "
+  "TAHTO defends at the compute layer; transmission-layer attacks are out of scope.")
 
 TBL(
-    "TABLE I.  Modelled Attack Types, Behaviours, and Observable Telemetry Signals",
-    ["Attack Type", "Node Behaviour During Attack", "Observable Feature Change"],
+    "TABLE I.  Attack Types, Behaviours, and Observable Telemetry Signals",
+    ["Attack Type", "Behaviour During Attack", "Observable Feature Change"],
     [
         ["Byzantine Failure",
-         "Returns plausible but incorrect task results while maintaining normal operational appearance",
-         "Task success rate drops; IDS alert count rises; CPU pattern becomes anomalous"],
+         "Returns plausible-but-incorrect task results while appearing operational",
+         "Task success rate \u2193; IDS alerts \u2191; anomalous CPU pattern"],
         ["Node Spoofing",
-         "Malicious node presents forged identity credentials of a legitimate node",
-         "Authentication status = 0 (fails re-validation); net latency fluctuates anomalously"],
+         "Presents forged identity credentials of a legitimate node",
+         "Auth status = 0; network latency fluctuates anomalously"],
         ["Data Injection",
          "Silently corrupts task output payloads (e.g., falsified biosignal readings)",
-         "Elevated IDS alerts; output checksum failures; abnormal task success rate"],
+         "IDS alerts \u2191; checksum failures; task success rate \u2193"],
         ["Resource Exhaustion",
-         "Floods its own queue or network interfaces to deny service to legitimate tasks",
-         "Queue length at maximum; packet loss rate spikes; node availability drops"],
-    ])
+         "Floods queue or network interfaces to deny service",
+         "Queue at max; packet loss \u2191; availability \u2193"],
+    ],
+    col_widths=[1.5, 2.8, 2.45])
 
-# ═══════════════════════ IV. SYSTEM ARCHITECTURE ════════════════════════════
+# ─── IV. SYSTEM ARCHITECTURE ─────────────────────────────────────────────────
 SH("IV.  System Architecture")
+B("Fig.\u202f1 shows the three-layer TAHTO architecture. The Trust Prediction "
+  "Engine and TAHTO Scheduler co-reside at the edge layer, operating in a "
+  "tight monitoring-decision-retraining loop. Each layer has distinct roles:")
+SSH("A.  Layer 1 \u2014 IoMT Device Layer")
+B("Wearable ECG patches, SpO\u2082 sensors, glucose monitors, portable MRI "
+  "interfaces, and smart infusion pumps continuously generate tasks "
+  "characterised by a four-tuple (Eq.\u202f1):")
+EQ("task_i = ( d_i,  c_i,  \u03c4_i,  s_i )", "1")
+B0("where d_i is data payload (KB), c_i required CPU cycles, \u03c4_i the "
+   "hard deadline (ms), and s_i \u2208 {Low, Medium, High} the clinical "
+   "sensitivity label. High-sensitivity tasks (e.g., cardiac arrhythmia "
+   "detection, insulin dosage computation) require the stricter trust threshold "
+   "T_high\u202f=\u202f0.70 before any edge assignment.")
 
-B("TAHTO is structured as a three-layer hierarchical offloading framework "
-  "(Fig. 1). Each layer has distinct roles, and the Trust Prediction Engine "
-  "and TAHTO Scheduler co-reside at the edge layer, operating in a tight "
-  "monitoring-decision loop.")
-
-SSH("A.  Layer 1: IoMT Device Layer")
-B("IoMT endpoints — wearable ECG patches, SpO2 sensors, glucose monitors, "
-  "portable MRI interfaces, and smart infusion pumps — continuously generate "
-  "computational tasks and transmit them wirelessly to the edge layer. Each task "
-  "is characterised by a four-tuple:")
-EQ("task_i = (d_i, c_i, \u03c4_i, s_i)", "1")
-B0("where d_i is the input data payload (KB), c_i the required CPU cycles, "
-   "\u03c4_i the hard deadline (ms), and s_i \u2208 {Low, Medium, High} the "
-   "clinical sensitivity label. High-sensitivity tasks (e.g., cardiac arrhythmia "
-   "detection, insulin dosage computation) are subject to the stricter trust "
-   "threshold T_high = 0.70 before any edge assignment.")
-
-SSH("B.  Layer 2: Edge Computing Layer")
-B("The Edge Computing Layer hosts five heterogeneous edge nodes. Each node "
-  "exposes a 9-feature real-time telemetry vector (Table II) that captures "
-  "both its computational state (CPU load, memory, queue depth) and its "
-  "security posture (authentication status, IDS alert count, task success rate). "
-  "This layer also hosts two key TAHTO components:")
-B("Trust Prediction Engine: An XGBoost classifier consumes the latest telemetry "
-  "snapshot of each node and produces a continuous trust score T(n) \u2208 [0, 1], "
-  "where 1.0 indicates high confidence of legitimate behaviour and 0.0 indicates "
-  "high confidence of compromise. The model is updated online after each "
-  "monitoring window (every UPDATE_EVERY = 50 tasks) to adapt to evolving "
-  "attack patterns. The update protocol evaluates the current unseen window "
-  "before retraining, ensuring reported metrics reflect true online generalisation "
-  "rather than training-set performance.")
-B("TAHTO Scheduler: Receives the arriving task and the current trust scores, "
-  "applies the trust gate to filter unsafe candidates, computes the composite "
-  "scheduling score for each remaining node, and routes the task to the "
-  "highest-scoring node. If no node passes the trust gate, or if the "
-  "sole trusted node is queue-saturated, the scheduler escalates to the "
-  "trusted cloud.")
-
-SSH("C.  Layer 3: Cloud Layer")
-B("The cloud server is a high-capacity compute cluster operating within a "
-  "NIST-compliant secure data centre. It serves exclusively as the escalation "
-  "target — TAHTO never routes tasks to the cloud out of preference for lower "
-  "latency, only as a safety fallback. Cloud latency is modelled as a fixed "
-  "L_cloud = 100 ms (round-trip + processing), which exceeds the edge latency "
-  "of trusted nodes in S1, S2, S4, and S5, but is preferable to routing to "
-  "compromised edge nodes that return incorrect results.")
-
-FIG("fig_architecture.png",
-    "Fig. 1.  TAHTO Three-Layer System Architecture. IoMT devices (Layer 1) "
-    "offload tasks to the Edge Computing Layer (Layer 2), which hosts the Trust "
-    "Prediction Engine and TAHTO Scheduler. Untrusted nodes are excluded by the "
-    "trust gate; queue-saturated or trust-failed tasks escalate to the Trusted "
-    "Cloud (Layer 3).",
+FIG("arch_three_tier.png",
+    "Fig. 1.  TAHTO Three-Layer System Architecture. IoMT devices (bottom) "
+    "offload tasks to the Edge Computing Layer hosting the Trust Prediction "
+    "Engine (XGBoost) and Hybrid Task Scheduler. Nodes with T(n) below the "
+    "trust gate are excluded (red, Compromised); tasks escalate to the "
+    "Trusted Cloud only when no safe edge node is available.",
     width=6.5)
+
+SSH("B.  Layer 2 \u2014 Edge Computing Layer")
+B("Five heterogeneous edge nodes expose a 9-feature real-time telemetry "
+  "vector (Table\u202fII) capturing both computational state and security posture. "
+  "Two TAHTO components operate at this layer:")
+BLT("Trust Prediction Engine: XGBoost classifier produces T(n)\u202f\u2208\u202f[0,\u202f1] "
+    "from current telemetry. The model is updated online after every monitoring "
+    "window (UPDATE_EVERY\u202f=\u202f50 tasks) via the evaluate-before-retrain protocol "
+    "detailed in Section\u202fV-B, adapting to post-onset attacker behaviour.")
+BLT("TAHTO Scheduler: Applies trust gates (Eqs.\u202f7-8) to filter unsafe "
+    "candidates, computes the composite normalised score (Eq.\u202f2) for each "
+    "remaining node, and routes to the highest-scoring node. Escalates to "
+    "cloud when no node clears the gate or all trusted nodes are queue-saturated.")
 
 TBL(
     "TABLE II.  9-Feature Real-Time Trust Telemetry Vector per Edge Node",
-    ["#", "Feature Name", "Type", "Security Relevance"],
+    ["#", "Feature", "Type", "Security Relevance"],
     [
-        ["1", "CPU Utilisation (%)",      "Continuous", "Elevated under resource-exhaustion attack"],
-        ["2", "Memory Utilisation (%)",   "Continuous", "Inflated by malware or queue flooding"],
-        ["3", "Queue Length (tasks)",     "Integer",    "Saturated under denial-of-service"],
-        ["4", "Network Latency (ms)",     "Continuous", "Anomalous under spoofing or routing attack"],
-        ["5", "Packet Loss Rate (%)",     "Continuous", "Elevated under resource-exhaustion"],
-        ["6", "Authentication Status",   "Binary",     "0 = auth failure (spoofing indicator)"],
-        ["7", "Task Success Rate (%)",   "Continuous", "Drops under Byzantine/data-injection attack"],
-        ["8", "IDS Alert Count",         "Integer",    "Rises under any active attack type"],
-        ["9", "Node Availability (ratio)","Continuous", "Falls under intermittent compromise"],
-    ])
+        ["1", "CPU Utilisation (%)",     "Continuous", "Elevated under resource-exhaustion attack"],
+        ["2", "Memory Utilisation (%)",  "Continuous", "Inflated by malware or queue flooding"],
+        ["3", "Queue Length (tasks)",    "Integer",    "Saturated under denial-of-service"],
+        ["4", "Network Latency (ms)",    "Continuous", "Anomalous under spoofing / routing attack"],
+        ["5", "Packet Loss Rate (%)",    "Continuous", "Elevated under resource-exhaustion"],
+        ["6", "Authentication Status",  "Binary",     "0 = auth failure (spoofing indicator)"],
+        ["7", "Task Success Rate (%)",  "Continuous", "Drops under Byzantine / data-injection"],
+        ["8", "IDS Alert Count",        "Integer",    "Rises under any active attack type"],
+        ["9", "Node Availability",      "Continuous", "Falls under intermittent compromise"],
+    ],
+    col_widths=[0.25, 1.45, 0.85, 2.95])
 
-# ════════════════════ V. PROPOSED METHODOLOGY ═══════════════════════════════
+SSH("C.  Layer 3 \u2014 Cloud Layer")
+B("The cloud server operates within a NIST-compliant secure data centre "
+  "(L_cloud\u202f=\u202f100\u202fms fixed). TAHTO routes to the cloud only as a "
+  "safety fallback, never out of latency preference. In S1, S2, S4, S5 "
+  "(ample trusted edge capacity), TAHTO escalation is 0%. The cloud becomes "
+  "essential only in S3 (queue saturation at 1\u202fMbps) and S6 (sole "
+  "legitimate node overloaded at 5\u202fMbps).")
+
+# ─── V. PROPOSED METHODOLOGY ─────────────────────────────────────────────────
 SH("V.  Proposed Methodology")
+SSH("A.  Trust Feature Engineering and Initial Training")
+B("The XGBoost trust classifier is trained on 3,000 synthetic labelled samples "
+  "(85% legitimate / 15% malicious) with intentionally overlapping distributions:")
+BLT("Borderline stressed nodes (25% of legitimate class): High load with "
+    "elevated CPU and reduced task success rate, mimicking transient overload.")
+BLT("Stealthy attackers (45% of malicious class): Compromised nodes partially "
+    "mimicking legitimate behaviour (moderate CPU, near-normal latency).")
+B("Intentional overlap prevents trivially separable decision boundaries, "
+  "producing realistic sub-perfect accuracy. Pre-processing: MinMaxScaler "
+  "on all continuous features, SMOTE on the minority class, "
+  "n_estimators=100, max_depth=4, scale_pos_weight=5. "
+  "Initial training uses WARMUP_WINDOWS=8 historical windows from a "
+  "separate calibration dataset ensuring both class labels are available "
+  "regardless of scenario attack timing.")
 
-SSH("A.  Trust Feature Engineering and Model Training")
-B("The XGBoost trust classifier is trained on synthetic data generated to "
-  "reflect realistic IoMT edge-node behaviour. We use 3,000 labelled samples "
-  "with an 85%/15% legitimate/malicious class split. Critically, the training "
-  "distribution includes deliberately overlapping sub-populations:")
-BLT("Borderline stressed nodes (25% of legitimate class): Nodes under high "
-    "load with elevated CPU, elevated queue length, and reduced task success "
-    "rate — mimicking transient overload that should not trigger false trust "
-    "rejection.")
-BLT("Stealthy attackers (45% of malicious class): Compromised nodes that "
-    "partially mimic legitimate behaviour (moderate CPU, near-normal latency) "
-    "to evade simple threshold-based detection.")
-B("This intentional distributional overlap prevents the classifier from learning "
-  "a trivially separable decision boundary, producing realistic sub-perfect "
-  "classification accuracy rather than artificially inflated scores. Pre-processing "
-  "applies MinMaxScaler normalisation to all continuous features and SMOTE "
-  "oversampling on the minority (malicious) class in the training split. "
-  "Hyperparameters: n_estimators=100, max_depth=4, "
-  "scale_pos_weight=5 (to further address class imbalance).")
-B("Initial model training uses WARMUP_WINDOWS = 8 monitoring windows from a "
-  "historical calibration dataset (separate nodes: 3 legitimate, 2 malicious "
-  "from t=0). This ensures both classes are represented regardless of the "
-  "evaluation scenario's attack timing, preventing cold-start label deficiency.")
+SSH("B.  Adaptive Online Retraining Protocol (Fig.\u202f2)")
+B("The trust model is not static. The Fig.\u202f2 pipeline shows how the model "
+  "adapts continuously from raw telemetry through preprocessing, XGBoost "
+  "classification, trust score output, and scheduler integration. "
+  "After every UPDATE_EVERY=50 tasks, Algorithm\u202f1 executes:")
 
-SSH("B.  Adaptive Online Retraining Protocol")
-B("The TAHTO trust model is not static. After every UPDATE_EVERY = 50 tasks "
-  "(approximately one monitoring window), the following protocol executes (Fig. 2):")
-ALGO("Algorithm 1: TAHTO Online Trust Adaptation Protocol",
+FIG("arch_trust_pipeline.jpeg",
+    "Fig. 2.  Trust Prediction Pipeline: Feature Extraction \u2192 "
+    "Data Preprocessing (SMOTE, normalisation) \u2192 XGBoost ML Model "
+    "(10-fold CV, hyperparameter tuning) \u2192 Trust Score Output T(n)\u202f\u2208\u202f[0,\u202f1] "
+    "\u2192 Scheduler Integration. The continuous monitoring & update loop "
+    "enables online adaptation after attack onset.",
+    width=6.5)
+
+ALGO("Algorithm 1: TAHTO Online Trust Adaptation",
      [
          "INPUT:  current window telemetry X_w, labels Y_w",
-         "INPUT:  accumulated training set (X_train, Y_train)",
-         "INPUT:  trained XGBoost model M",
+         "        accumulated training set (X_train, Y_train), model M",
          "",
-         "1: Evaluate M on (X_w, Y_w)  // test on unseen window FIRST",
-         "   record accuracy, precision, recall, F1 for this window",
+         "Step 1: metrics = M.evaluate(X_w, Y_w)      // evaluate on UNSEEN window FIRST",
+         "        record accuracy, precision, recall, F1 for this window",
          "",
-         "2: Append X_w to X_train; append Y_w to Y_train",
+         "Step 2: X_train += X_w ;  Y_train += Y_w    // add window to history",
          "",
-         "3: IF both classes present in Y_train THEN",
-         "     Apply SMOTE to training split",
-         "     M.fit(X_train, Y_train)  // retrain on all accumulated data",
-         "4: END IF",
+         "Step 3: IF both class labels present in Y_train THEN",
+         "           apply SMOTE to training split",
+         "           M.fit(X_train, Y_train)           // retrain on all accumulated data",
+         "        END IF",
          "",
-         "5: FOR each node n IN edge_nodes DO",
-         "     T(n) = M.predict_proba(n.features())[1]  // update trust score",
-         "6: END FOR",
+         "Step 4: FOR each node n DO",
+         "           T(n) = M.predict_proba(n.features)[1]   // update trust score",
+         "        END FOR",
          "",
-         "OUTPUT: Updated trust scores T(n) for all nodes",
+         "OUTPUT: Updated trust scores T(n) \u2208 [0, 1] for all edge nodes",
      ])
-B("Step 1 (evaluate before retrain) is critical for honest reporting: "
-  "it captures true online generalisation performance on data the model has "
-  "not yet seen. Step 2-4 ensures the model adapts to post-onset attack "
-  "behaviour — as the attacker's telemetry pattern becomes available in the "
-  "training set, the model learns to distinguish it from legitimate behaviour "
-  "even when it partially mimics benign nodes.")
+B("Step\u202f1 (evaluate before retrain) is critical for honest metric reporting: "
+  "it captures true online generalisation on data the model has not yet seen. "
+  "As attacker telemetry accumulates in the training set, the model learns to "
+  "distinguish post-onset attacker patterns even when partially mimicking "
+  "benign behaviour.")
 
-FIG("fig_trust_pipeline.png",
-    "Fig. 2.  TAHTO Adaptive Trust Prediction and Scheduling Pipeline. "
-    "Historical calibration data provides the initial model. Each subsequent "
-    "monitoring window is evaluated on the unseen window first (recording "
-    "online metrics), then added to the training set for retraining. "
-    "Trust scores are immediately applied to all routing decisions.",
+SSH("C.  Min-Max Normalised Scheduling Objective")
+B("For each arriving task i, TAHTO evaluates all candidate edge nodes passing "
+  "the trust gate. The composite score is (Eq.\u202f2):")
+EQ("Score(i,n) = \u03b1\u00b7L\u2099\u2092\u1d63\u2098(n) + \u03b2\u00b7E\u2099\u2092\u1d63\u2098(n) + \u03b3\u00b7QoS(i,n) + \u03b4\u00b7T(n)", "2")
+B0("with \u03b1=0.30, \u03b2=0.20, \u03b3=0.20, \u03b4=0.30 (\u03b1+\u03b2+\u03b3+\u03b4=1). "
+   "Min-max benefit normalisation across the candidate set:")
+EQ("L_norm(n) = (max_k Lat(k) \u2212 Lat(n)) / (max_k Lat(k) \u2212 min_k Lat(k))", "3")
+EQ("E_norm(n) = (max_k Eng(k) \u2212 Eng(n)) / (max_k Eng(k) \u2212 min_k Eng(k))", "4")
+B0("End-to-end latency estimate Lat(i,n) = T_tx + T_queue + T_proc. "
+   "QoS(i,n) = 1.0 if Lat \u2264 0.7\u03c4_i; = 0.7 if Lat \u2264 \u03c4_i; else 0.2. "
+   "Node n* = argmax Score(i,n) receives the task.")
+
+SSH("D.  Trust Gate and Cloud Escalation")
+B("Two hard trust gates unconditionally exclude unsafe nodes before scoring:")
+EQ("Gate 1 (all tasks):        exclude n  if  T(n) < T_min  = 0.50", "5")
+EQ("Gate 2 (High-sensitivity): exclude n  if  T(n) < T_high = 0.70", "6")
+B("Cloud escalation triggers on any of three conditions:")
+BLT("C1: No node passes Gate\u202f1 (all nodes distrusted).")
+BLT("C2: Task is High-sensitivity and no node passes Gate\u202f2.")
+BLT("C3: All gate-passing nodes have queue_depth \u2265 MAX_QUEUE_DEPTH (=8). "
+    "Prevents hot-spotting on the sole trusted node in S6.")
+
+# ─── VI. EXPERIMENTAL EVALUATION ─────────────────────────────────────────────
+SH("VI.  Experimental Evaluation")
+SSH("A.  Simulation Setup, Scenarios, and Baselines")
+B(f"A Python discrete-event simulator models M=50 IoMT devices (500 tasks "
+  "per seed, Poisson arrival), N=5 heterogeneous edge nodes, variable "
+  "bandwidth B \u2208 {1, 5, 20, 100}\u202fMbps, and one trusted cloud server "
+  "(L_cloud=100\u202fms). Experiments use {N_SEEDS} independent seeds; "
+  "all results report mean\u00b1SD. Three baselines: "
+  "B1 (Performance-Only: min-latency routing, no trust), "
+  "B2 (Static Reputation: offline scores calibrated before attack onset, "
+  "cannot adapt), B3 (Cloud-Only: all tasks unconditionally escalated).")
+
+FIG("arch_scenarios.jpeg",
+    "Fig. 3.  Six Evaluation Scenarios. S1 (Balanced Load): normal baseline; "
+    "S2 (Heavy Load / 20\u202fMbps): bandwidth squeeze; "
+    "S3 (Low Bandwidth / 1\u202fMbps): transmission bottleneck; "
+    "S4 (Node Failures): two nodes failed, three trusted; "
+    "S5 (Malicious Nodes): two Byzantine nodes with delayed onset at t=20\u202fs; "
+    "S6 (Mixed Threat): combined failures, malicious nodes, and 5\u202fMbps.",
     width=6.5)
 
-SSH("C.  Multi-Objective Scheduling with Min-Max Normalisation")
-B("For each arriving task i, TAHTO evaluates all candidate edge nodes that "
-  "have passed the trust gate (Section V-D). For a candidate set C_i, "
-  "the composite scheduling score is:")
-EQ("Score(i, n) = \u03b1\u00b7L_norm(n) + \u03b2\u00b7E_norm(n) + \u03b3\u00b7QoS(i,n) + \u03b4\u00b7T(n)", "2")
-B0("where \u03b1=0.30, \u03b2=0.20, \u03b3=0.20, \u03b4=0.30, and \u03b1+\u03b2+\u03b3+\u03b4=1. "
-   "L_norm and E_norm are min-max benefit scores computed across the candidate set:")
-EQ("L_norm(n) = (max_{k\u2208C_i} Lat(k) \u2212 Lat(n)) / (max_{k} Lat(k) \u2212 min_{k} Lat(k))", "3")
-EQ("E_norm(n) = (max_{k\u2208C_i} Eng(k) \u2212 Eng(k)) / (max_{k} Eng(k) \u2212 min_{k} Eng(k))", "4")
-B0("If all candidates have equal latency (or energy), L_norm = E_norm = 1 for all. "
-   "The end-to-end latency estimate for node n is:")
-EQ("Lat(i, n) = T_tx + T_queue + T_proc", "5")
-B0("where T_tx = d_i / (B_n \u00d7 10\u00b3) \u00d7 10\u00b3 ms (transmission at bandwidth B_n), "
-   "T_queue is the waiting time until node n is available (from its task queue), "
-   "and T_proc = c_i / (f_n \u00d7 10\u2079) ms (processing at node frequency f_n GHz). "
-   "The QoS term is a deadline-aware step function:")
-EQ("QoS(i, n) = 1.0   if  Lat(i,n) \u2264 0.70 \u00b7 \u03c4_i", "6a")
-EQ("          = 0.7   if  Lat(i,n) \u2264 \u03c4_i           ", "6b")
-EQ("          = 0.2   otherwise                    ", "6c")
-B("The node n* = argmax_{n\u2208C_i} Score(i, n) receives the task assignment. "
-  "Min-max normalisation ensures the \u03b1 and \u03b2 weights are directly "
-  "interpretable as relative importance fractions, independent of the "
-  "absolute scale of latency or energy values across different scenarios.")
-
-SSH("D.  Trust Gate and Adaptive Cloud Escalation")
-B("Before composite scoring, TAHTO applies two sequential hard trust gates "
-  "that unconditionally exclude unsafe nodes:")
-EQ("Gate 1 (all tasks):        exclude n  if  T(n) < T_min = 0.50", "7")
-EQ("Gate 2 (High sensitivity): exclude n  if  T(n) < T_high = 0.70", "8")
-B("Gate 1 implements the NIST Zero-Trust principle at the compute layer: "
-  "no edge node with trust score below 0.50 is ever used, regardless of how "
-  "attractive its latency or QoS scores appear. Gate 2 provides additional "
-  "protection for High-sensitivity clinical tasks (e.g., arrhythmia analysis, "
-  "drug dosage decisions) that require higher confidence in node integrity.")
-B("After gating, cloud escalation is triggered by any of three conditions:")
-BLT("Condition 1: No edge node passes Gate 1 (all nodes distrusted).")
-BLT("Condition 2: Task has s_i = High and no node passes Gate 2.")
-BLT("Condition 3: All gate-passing nodes are queue-saturated "
-    "(queue_depth \u2265 MAX_QUEUE_DEPTH = 8).")
-B("Condition 3 is critical for the S6 scenario: with only one legitimate node "
-  "operating at 5 Mbps bandwidth, that node's queue saturates rapidly. Without "
-  "Condition 3, all remaining tasks would pile up at a single hot-spot edge node, "
-  "producing unbounded queue latency. TAHTO detects this state and escalates "
-  "to the trusted cloud (100 ms flat latency), trading some latency for "
-  "predictable, secure completion.")
-
-# ══════════════════ VI. EXPERIMENTAL EVALUATION ════════════════════════════
-SH("VI.  Experimental Evaluation")
-
-SSH("A.  Simulation Setup and Baselines")
-B("We implement a custom Python discrete-event simulator with the following "
-  "configuration: M=50 IoMT devices generating 500 tasks per seed via a "
-  "Poisson arrival process; N=5 heterogeneous edge nodes with CPU frequencies "
-  "f \u2208 {1.5, 1.8, 2.0, 2.2, 2.5} GHz; variable bandwidth B; and one "
-  "trusted cloud server (L_cloud=100 ms). Task sizes follow a uniform "
-  "distribution d_i \u223c U(50, 500) KB; CPU cycles c_i \u223c U(10\u2078, 10\u2079); "
-  "deadlines \u03c4_i \u223c U(50, 500) ms. All experiments use 10 independent "
-  f"random seeds ({N_SEEDS} seeds) and report mean \u00b1 standard deviation.")
-B("Three baselines are evaluated:")
-BLT("B1 \u2013 Performance-Only: Selects the edge node with minimum estimated "
-    "latency. No trust awareness; escalates only when all nodes are queue-full.")
-BLT("B2 \u2013 Static Reputation: Uses pre-computed offline reputation scores "
-    "(calibrated before the attack onset, sampled from U(0.72, 0.96)). "
-    "Scores cannot adapt after t=20 s attack onset. Uses the same "
-    "normalised scoring function as TAHTO but with fixed reputation "
-    "instead of live trust scores.")
-BLT("B3 \u2013 Cloud-Only: Routes all tasks unconditionally to the cloud "
-    "(L=100 ms). Zero security risk; maximum latency overhead.")
 TBL(
     "TABLE III.  Six Evaluation Scenarios",
-    ["ID", "Description", "Active Nodes", "Bandwidth", "Primary Challenge"],
+    ["ID", "Description", "Active / Malicious Nodes", "BW (Mbps)", "Challenge"],
     [
-        ["S1", "Baseline — all nodes healthy",                 "5 (0 malicious)", "100 Mbps", "Normal operation"],
-        ["S2", "Bandwidth reduction",                          "5 (0 malicious)", "20 Mbps",  "Transmission bottleneck"],
-        ["S3", "Severe bandwidth constraint",                  "5 (0 malicious)", "1 Mbps",   "Queue saturation at edge"],
-        ["S4", "Two node failures",                            "3 (0 malicious)", "100 Mbps", "Resilience to node loss"],
-        ["S5", "Two Byzantine nodes (onset at t=20 s)",        "5 (2 malicious)", "100 Mbps", "Adaptive security"],
-        ["S6", "Failures + Byzantine + low bandwidth",         "3 (2 malicious)", "5 Mbps",   "Combined worst case"],
-    ])
+        ["S1", "All nodes healthy",               "5 / 0", "100", "Baseline"],
+        ["S2", "Bandwidth reduction",              "5 / 0", "20",  "Transmission bottleneck"],
+        ["S3", "Severe bandwidth constraint",      "5 / 0", "1",   "Queue saturation at edge"],
+        ["S4", "Two node failures",                "3 / 0", "100", "Resilience to node loss"],
+        ["S5", "Two Byzantine (onset t=20\u202fs)","5 / 2", "100", "Adaptive security"],
+        ["S6", "Failures + Byzantine + low BW",   "3 / 2", "5",   "Combined worst case"],
+    ],
+    col_widths=[0.30, 1.75, 1.45, 0.65, 1.55])
 
-SSH("B.  Online Trust Model Performance")
-B(f"Fig. 3 plots the trust-model F1 score evaluated on each unseen monitoring "
-  f"window across all scenarios. In S1\u2013S4 (no post-onset Byzantine nodes), "
-  f"TAHTO maintains F1 = {_f('S1','TAHTO','ml_f1',3)}\u2013{_f('S4','TAHTO','ml_f1',3)}, "
-  "reflecting near-perfect classification of the stable telemetry distributions. "
-  f"In S5, F1 is {_fs('S5','TAHTO','ml_f1',3)}: the model's F1 dips in the first "
-  "window after the t=20 s attack onset (when attacker telemetry first appears "
-  "in evaluation data but the model has not yet retrained on it), then recovers "
-  "as the online retraining protocol accumulates post-onset labelled examples. "
-  f"In S6, F1 drops to {_fs('S6','TAHTO','ml_f1',3)} due to the compounded "
-  "difficulty: two Byzantine nodes at only 5 Mbps produce overlapping "
-  "feature distributions with the single stressed-but-legitimate node. "
-  "This honest degradation reflects realistic classification difficulty "
-  "rather than a training-data artefact, and is significantly better than "
-  "the zero security awareness of B1 and B2.")
+SSH("B.  Online Trust Model F1 Performance")
+B(f"Fig.\u202f4 plots the trust-model F1 on each unseen monitoring window. "
+  f"In S1\u2013S4, TAHTO maintains F1 \u2265 {_f('S4','TAHTO','ml_f1',3)}\u2014"
+  "near-perfect classification of stable telemetry. "
+  f"In S5, F1\u202f=\u202f{_fs('S5','TAHTO','ml_f1',3)}: a brief dip occurs "
+  "in the first window after the t=20\u202fs attack onset (model has not yet "
+  "retrained on post-onset data), then recovers via Algorithm\u202f1. "
+  f"In S6, F1 drops to {_fs('S6','TAHTO','ml_f1',3)} due to overlapping "
+  "features between two Byzantine nodes and one stressed legitimate node "
+  "at 5\u202fMbps. This honest degradation reflects realistic difficulty, "
+  "not a training artefact.")
 FIG("fig5_ml_f1.png",
-    f"Fig. 3.  Online trust-model F1 score per unseen monitoring window, "
-    f"mean \u00b1 SD (n={N_SEEDS} seeds). Static-reputation (B2) and performance-only (B1) "
-    "baselines have no trust model; B3 (Cloud-Only) achieves trivially perfect "
-    "F1 = 1.0 as it never routes to edge nodes. TAHTO degrades gracefully "
-    "under combined adversarial pressure (S6).",
+    f"Fig. 4.  Online Trust-Model F1 per unseen monitoring window, "
+    f"mean\u00b1SD (n={N_SEEDS}). TAHTO adapts after attack onset; "
+    "B2 (Static Reputation) cannot adapt and is not shown as it has "
+    "no live trust model. Degradation in S6 reflects genuine "
+    "classification difficulty under combined adversarial pressure.",
     width=6.5)
 
-SSH("C.  Latency Analysis")
-B(f"Fig. 4 compares average end-to-end latency across all scenarios. In S1 "
-  f"(100 Mbps, all healthy), TAHTO achieves {_f('S1','TAHTO','avg_latency_ms')} ms, "
-  f"identical to B1 ({_f('S1','B1','avg_latency_ms')} ms) and B2 "
-  f"({_f('S1','B2','avg_latency_ms')} ms) — the trust gate excludes no nodes "
-  "when all are healthy, so TAHTO's routing degenerates to performance-optimal. "
-  f"In S2 (20 Mbps) and S4 (2 failed nodes), latency similarly matches B1/B2, "
-  "confirming TAHTO imposes no latency penalty when trust gates are inactive.")
-B(f"In S3 (1 Mbps), all three edge-aware schedulers converge to "
-  f"{_f('S3','TAHTO','avg_latency_ms')} ms — queue saturation at the 1 Mbps "
-  "bottleneck dominates. TAHTO's cloud escalation (38.4%) provides no latency "
-  "advantage here because the cloud's 100 ms is comparable to queue wait times "
-  "at 1 Mbps. However, it prevents queue overflow that would drop tasks.")
-B(f"In S6 (combined worst case), TAHTO achieves "
-  f"{_f('S6','TAHTO','avg_latency_ms')} ms \u2014 substantially lower than B1 "
-  f"({_f('S6','B1','avg_latency_ms')} ms) and B2 "
-  f"({_f('S6','B2','avg_latency_ms')} ms). The explanation is counter-intuitive: "
-  "B1 and B2 route to all 5 nodes including the 2 malicious ones. Malicious "
-  "nodes return results immediately (tasks are \u2018completed\u2019 with corrupted "
-  "output), creating high \u2018efficiency\u2019 at the cost of data integrity. "
-  "Their actual completion (tasks with correct results) collapses to 69.5%. "
-  "TAHTO routes only to the 1 trusted edge node (5 Mbps) and the cloud, "
-  "accepting a higher honest latency in exchange for correct results.")
+SSH("C.  Latency and Task Completion (Figs.\u202f5 & 6)")
+B(f"In S1\u2013S4 (no Byzantine nodes), TAHTO latency matches B1/B2 exactly "
+  f"(S1: {_f('S1','TAHTO','avg_latency_ms')}\u202fms) because the trust gate "
+  "excludes no nodes when all are healthy. In S3 (1\u202fMbps bottleneck), "
+  "all edge schedulers converge as queue saturation dominates; TAHTO's "
+  f"{_f('S3','TAHTO','cloud_escalation_pct',0)}% cloud escalation prevents "
+  "queue overflow rather than reducing latency.")
+B(f"In S6, TAHTO achieves {_f('S6','TAHTO','avg_latency_ms')}\u202fms latency "
+  f"vs B1/B2's {_f('S6','B1','avg_latency_ms')}\u202fms. Counterintuitively, "
+  "B1/B2 appear faster because malicious nodes return results immediately "
+  "(corrupted outputs still count as \u2018fast\u2019). Their actual correct "
+  f"task completion collapses to {_f('S6','B1','task_completion_pct',1)}%: "
+  "40% of tasks routed to the 2 malicious nodes return incorrect results. "
+  "TAHTO accepts higher honest latency (routing only to 1 trusted edge node "
+  "at 5\u202fMbps and the cloud) in exchange for "
+  f"{_f('S6','TAHTO','task_completion_pct',1)}% correct completion.")
 FIG("fig1_latency.png",
-    f"Fig. 4.  Average end-to-end latency (ms), mean \u00b1 SD (n={N_SEEDS} seeds). "
-    "TAHTO and B1/B2 are equivalent in S1\u2013S4; TAHTO achieves lower "
-    "latency than B1/B2 in S6 because B1/B2 waste cycles on corrupted-output "
-    "malicious nodes. B3 is constant at 100 ms (cloud latency).",
+    f"Fig. 5.  Average end-to-end latency (ms), mean\u00b1SD (n={N_SEEDS}). "
+    "TAHTO matches B1/B2 in safe scenarios; achieves lower \u2018honest latency\u2019 "
+    "than B1/B2 in S6 because B1/B2 waste cycles on corrupted-output "
+    "malicious nodes. B3 constant at 100\u202fms (cloud).",
     width=6.5)
-
-SSH("D.  Task Completion Rate")
-B(f"Fig. 5 shows task completion rates. TAHTO achieves 100% completion in "
-  "S1\u2013S4 (all healthy scenarios), matching B1, B2, and B3. "
-  f"In S5, TAHTO achieves {_fs('S5','TAHTO','task_completion_pct',1)}% "
-  "completion, marginally below B3 (100%) due to the 0.22% miss window "
-  "at attack onset. In S6, the contrast is stark: TAHTO achieves "
-  f"{_fs('S6','TAHTO','task_completion_pct',1)}% completion while B1 and B2 "
-  f"collapse to {_fs('S6','B1','task_completion_pct',1)}%. "
-  "A task is counted as \u2018completed\u2019 only if it was routed to a non-malicious "
-  "node or the cloud. B1 and B2 route approximately 40% of tasks to the two "
-  "malicious nodes in S6 (2 malicious out of 5 total nodes), producing "
-  "incorrect outputs that are not counted as completions. TAHTO's trust gate "
-  "prevents this, achieving near-perfect completion through cloud escalation.")
 FIG("fig2_completion.png",
-    f"Fig. 5.  Task completion rate (%), mean \u00b1 SD (n={N_SEEDS} seeds). "
-    "TAHTO maintains near-100% completion across all scenarios; B1 and B2 "
-    "collapse to 69.5% in S6 where 40% of active nodes are compromised.",
+    f"Fig. 6.  Task completion rate (%), mean\u00b1SD (n={N_SEEDS}). "
+    "TAHTO maintains \u226598% completion in all scenarios. B1 and B2 collapse "
+    f"to {_f('S6','B1','task_completion_pct',1)}% in S6 (40% of tasks "
+    "routed to compromised nodes producing incorrect results).",
     width=6.5)
 
-SSH("E.  Malicious-Node Avoidance")
-B(f"Fig. 6 plots the core security metric: the fraction of tasks that were "
-  "not routed to a malicious node. In S1\u2013S4 (no malicious nodes), all "
-  "schedulers achieve 100% by definition. In S5, TAHTO achieves "
-  f"{_fs('S5','TAHTO','malicious_avoid_pct',1)}% versus "
-  f"B1's {_fs('S5','B1','malicious_avoid_pct',1)}% and "
-  f"B2's {_fs('S5','B2','malicious_avoid_pct',1)}%. "
-  "TAHTO's 0.22% miss arises in the single window immediately after attack "
-  "onset, before the online model has retrained on post-onset data. B2's "
-  "4.42% miss rate shows that static reputation scores, calibrated before "
-  "the attack, cannot detect the post-onset behaviour change.")
+SSH("D.  Malicious-Node Avoidance (Fig.\u202f7)")
+B(f"TAHTO achieves {_fs('S5','TAHTO','malicious_avoid_pct',1)}% avoidance in S5 "
+  f"(vs B1: {_fs('S5','B1','malicious_avoid_pct',1)}%, "
+  f"B2: {_fs('S5','B2','malicious_avoid_pct',1)}%). "
+  "B2's static scores, calibrated before the t=20\u202fs onset, miss "
+  "post-onset attacker behaviour; its 4.4% miss confirms that offline "
+  "reputation cannot substitute for online adaptive trust.")
 B(f"In S6, TAHTO achieves {_fs('S6','TAHTO','malicious_avoid_pct',1)}% "
-  f"avoidance versus B1 ({_fs('S6','B1','malicious_avoid_pct',1)}%) and "
-  f"B2 ({_fs('S6','B2','malicious_avoid_pct',1)}%). B1 and B2 route to the "
-  "2 malicious nodes at exactly the same rate as to legitimate nodes "
-  "(blind to trust), producing ~40% routing to attackers in a 5-node "
-  "environment with 2 compromised. TAHTO's 1.92% residual miss "
-  "is concentrated in the onset window; B3 achieves 100% by never using "
-  "edge nodes at all, but at the cost of cloud-only latency.")
+  f"vs B1/B2's {_fs('S6','B1','malicious_avoid_pct',1)}%. "
+  "B1 and B2 route to the 2 malicious nodes at the same rate as to "
+  "legitimate nodes (blind to trust), yielding \u224840% routing to "
+  "attackers in an environment where 2 of 3 active nodes are compromised. "
+  "TAHTO's 1.92% residual miss concentrates in the onset window and "
+  "resolves within 50\u2013100 tasks via online retraining.")
 FIG("fig3_security.png",
-    f"Fig. 6.  Malicious-node avoidance rate (%), mean \u00b1 SD (n={N_SEEDS} seeds). "
-    "TAHTO is the only adaptive scheduler that maintains high avoidance in both "
-    "S5 (pure attack) and S6 (combined attack). B1 and B2 degrade severely "
-    "in S6 due to routing blindness to trust.",
+    f"Fig. 7.  Malicious-node avoidance (%), mean\u00b1SD (n={N_SEEDS}). "
+    "TAHTO is the only adaptive scheduler maintaining high avoidance "
+    "in both pure-attack (S5) and combined adversarial (S6) scenarios. "
+    "B1/B2 degrade severely in S6 due to routing blindness.",
     width=6.5)
 
-SSH("F.  Cloud Escalation Behaviour")
-B(f"Fig. 7 shows cloud escalation rates. In S1, S2, S4, and S5, TAHTO escalates "
-  "0% of tasks to the cloud — there is sufficient trusted edge capacity to "
-  "absorb the workload locally. In S3 (1 Mbps), TAHTO escalates "
-  f"{_fs('S3','TAHTO','cloud_escalation_pct',1)}% of tasks via Condition 3 "
-  "(queue saturation): at 1 Mbps the edge nodes' queues build faster than "
-  "they drain, so TAHTO correctly identifies saturation and diverts tasks to "
-  f"the cloud. In S6, {_fs('S6','TAHTO','cloud_escalation_pct',1)}% of tasks "
-  "are escalated — the sole legitimate node at 5 Mbps cannot absorb the full "
-  "workload, triggering both Conditions 1 (trust gate failure for malicious nodes) "
-  "and 3 (queue saturation of the trusted node).")
-B("TAHTO thus operates as a principled, data-driven continuum between pure-edge "
-  "(B1/B2: 0\u20138% escalation) and pure-cloud (B3: 100%), adapting escalation "
-  "dynamically to the actual security and load conditions of each deployment "
-  "context without any manually tuned escalation threshold.")
+SSH("E.  Cloud Escalation Behaviour (Fig.\u202f8)")
+B(f"TAHTO escalates 0% in S1, S2, S4, S5 (sufficient trusted edge capacity). "
+  f"In S3, {_fs('S3','TAHTO','cloud_escalation_pct',1)}% tasks escalate via "
+  "Condition\u202fC3 (queue saturation at 1\u202fMbps). In S6, "
+  f"{_fs('S6','TAHTO','cloud_escalation_pct',1)}% escalate via C1 (Byzantine "
+  "nodes fail Gate\u202f1) and C3 (trusted node queue-saturated at 5\u202fMbps). "
+  "TAHTO thus operates as a principled continuum between pure-edge (B1/B2) "
+  "and pure-cloud (B3), with no manually tuned escalation threshold.")
 FIG("fig4_cloud.png",
-    f"Fig. 7.  Cloud escalation rate (%), mean \u00b1 SD (n={N_SEEDS} seeds). "
-    "TAHTO escalates selectively: 0% in low-stress scenarios, 38% in S3 "
-    "(bandwidth bottleneck), 36% in S6 (combined adversarial). B3 always "
-    "escalates 100%; B1/B2 escalate only under queue overflow.",
+    f"Fig. 8.  Cloud escalation rate (%), mean\u00b1SD (n={N_SEEDS}). "
+    f"TAHTO escalates 0% in S1\u2013S2/S4\u2013S5, {_f('S3','TAHTO','cloud_escalation_pct',0)}% "
+    f"in S3 (bandwidth bottleneck), {_f('S6','TAHTO','cloud_escalation_pct',0)}% in S6 "
+    "(combined adversarial). B3 always escalates 100%.",
     width=6.5)
 
-SSH("G.  Scheduling Weight Sensitivity Analysis")
-B("Fig. 8 presents a sensitivity sweep varying the latency weight \u03b1 from "
-  "0.10 (trust-heavy: \u03b4=0.50) to 0.50 (latency-heavy: \u03b4=0.10), with "
-  "\u03b2=0.20 and \u03b3=0.20 fixed (\u03b1+\u03b4=0.60 conserved). "
-  "Three configurations are tested across 10 seeds in S5 and S6.")
-B("Key findings: (1) Malicious-node avoidance in S5 is stable near 99.8% "
-  "across all configurations — the hard trust gate (Eq. 7) provides the "
-  "primary security guarantee independent of weight choice; the score weighting "
-  "only determines which trusted node is selected. (2) In S6, avoidance "
-  "remains \u226597% across all configurations. (3) Latency differences "
-  "between configurations are within 3 ms in S5 and 5 ms in S6 — negligible "
-  "in clinical context. The default \u03b1=0.30, \u03b4=0.30 represents a "
-  "balanced, robust configuration that neither over-weights latency "
-  "(risking lower-trust routing) nor over-weights trust (ignoring latency "
-  "differentials between equally-trusted nodes).")
+SSH("F.  Scheduling Weight Sensitivity (Fig.\u202f9)")
+B("Fig.\u202f9 sweeps \u03b1 (latency) from 0.10 to 0.50, with \u03b4 (trust) "
+  "decreasing correspondingly (\u03b2=0.20, \u03b3=0.20, \u03b1+\u03b4=0.60 conserved). "
+  "Malicious-node avoidance in S5 is stable \u226599.8% across all configurations: "
+  "the hard trust gate (not the scoring weights) is the dominant security mechanism. "
+  "In S6, avoidance remains \u226597%; latency differences between configurations "
+  "are within 5\u202fms. The default \u03b1=\u03b4=0.30 is a robust balanced choice.")
 FIG("fig6_sensitivity_analysis.png",
-    "Fig. 8.  Scheduling Weight Sensitivity Analysis in S5 and S6 "
-    "(10 seeds each). Latency (blue) and malicious-node avoidance (green) "
-    "for Trust-heavy (\u03b1=0.10, \u03b4=0.50), Balanced (\u03b1=0.30, \u03b4=0.30), "
-    "and Latency-heavy (\u03b1=0.50, \u03b4=0.10) configurations. "
-    "The trust gate is the dominant security mechanism; weight choice "
-    "has negligible effect on avoidance.",
+    "Fig. 9.  Scheduling Weight Sensitivity Analysis (n=10 seeds each). "
+    "Latency (blue) and malicious-node avoidance (green) for Trust-heavy "
+    "(\u03b1=0.10, \u03b4=0.50), Balanced (\u03b1=0.30, \u03b4=0.30), and Latency-heavy "
+    "(\u03b1=0.50, \u03b4=0.10) configurations in S5 and S6. "
+    "The trust gate is the dominant security mechanism.",
     width=6.0)
 
+SSH("G.  Summary Table")
 TBL(
-    "TABLE IV.  Summary of Results Across All Scenarios (TAHTO, mean \u00b1 SD, n=10 seeds)",
+    f"TABLE IV.  TAHTO Performance Summary (mean\u00b1SD, n={N_SEEDS} seeds)",
     ["Scenario", "Latency (ms)", "Completion (%)", "Avoidance (%)", "Cloud Esc. (%)", "F1 Score"],
     [
-        ["S1", _fs("S1","TAHTO","avg_latency_ms"), _fs("S1","TAHTO","task_completion_pct"), _fs("S1","TAHTO","malicious_avoid_pct"), _fs("S1","TAHTO","cloud_escalation_pct"), _fs("S1","TAHTO","ml_f1",3)],
-        ["S2", _fs("S2","TAHTO","avg_latency_ms"), _fs("S2","TAHTO","task_completion_pct"), _fs("S2","TAHTO","malicious_avoid_pct"), _fs("S2","TAHTO","cloud_escalation_pct"), _fs("S2","TAHTO","ml_f1",3)],
-        ["S3", _fs("S3","TAHTO","avg_latency_ms"), _fs("S3","TAHTO","task_completion_pct"), _fs("S3","TAHTO","malicious_avoid_pct"), _fs("S3","TAHTO","cloud_escalation_pct"), _fs("S3","TAHTO","ml_f1",3)],
-        ["S4", _fs("S4","TAHTO","avg_latency_ms"), _fs("S4","TAHTO","task_completion_pct"), _fs("S4","TAHTO","malicious_avoid_pct"), _fs("S4","TAHTO","cloud_escalation_pct"), _fs("S4","TAHTO","ml_f1",3)],
-        ["S5", _fs("S5","TAHTO","avg_latency_ms"), _fs("S5","TAHTO","task_completion_pct"), _fs("S5","TAHTO","malicious_avoid_pct"), _fs("S5","TAHTO","cloud_escalation_pct"), _fs("S5","TAHTO","ml_f1",3)],
-        ["S6", _fs("S6","TAHTO","avg_latency_ms"), _fs("S6","TAHTO","task_completion_pct"), _fs("S6","TAHTO","malicious_avoid_pct"), _fs("S6","TAHTO","cloud_escalation_pct"), _fs("S6","TAHTO","ml_f1",3)],
-    ])
+        ["S1", _fs("S1","TAHTO","avg_latency_ms"), _fs("S1","TAHTO","task_completion_pct"),
+               _fs("S1","TAHTO","malicious_avoid_pct"), _fs("S1","TAHTO","cloud_escalation_pct"),
+               _fs("S1","TAHTO","ml_f1",3)],
+        ["S2", _fs("S2","TAHTO","avg_latency_ms"), _fs("S2","TAHTO","task_completion_pct"),
+               _fs("S2","TAHTO","malicious_avoid_pct"), _fs("S2","TAHTO","cloud_escalation_pct"),
+               _fs("S2","TAHTO","ml_f1",3)],
+        ["S3", _fs("S3","TAHTO","avg_latency_ms"), _fs("S3","TAHTO","task_completion_pct"),
+               _fs("S3","TAHTO","malicious_avoid_pct"), _fs("S3","TAHTO","cloud_escalation_pct"),
+               _fs("S3","TAHTO","ml_f1",3)],
+        ["S4", _fs("S4","TAHTO","avg_latency_ms"), _fs("S4","TAHTO","task_completion_pct"),
+               _fs("S4","TAHTO","malicious_avoid_pct"), _fs("S4","TAHTO","cloud_escalation_pct"),
+               _fs("S4","TAHTO","ml_f1",3)],
+        ["S5", _fs("S5","TAHTO","avg_latency_ms"), _fs("S5","TAHTO","task_completion_pct"),
+               _fs("S5","TAHTO","malicious_avoid_pct"), _fs("S5","TAHTO","cloud_escalation_pct"),
+               _fs("S5","TAHTO","ml_f1",3)],
+        ["S6", _fs("S6","TAHTO","avg_latency_ms"), _fs("S6","TAHTO","task_completion_pct"),
+               _fs("S6","TAHTO","malicious_avoid_pct"), _fs("S6","TAHTO","cloud_escalation_pct"),
+               _fs("S6","TAHTO","ml_f1",3)],
+    ],
+    col_widths=[0.45, 1.20, 1.22, 1.22, 1.22, 1.44])
 
-# ═══════════════════════ VII. DISCUSSION ════════════════════════════════════
+# ─── VII. DISCUSSION ─────────────────────────────────────────────────────────
 SH("VII.  Discussion")
-
-SSH("A.  Security-Performance Trade-off")
-B("The fundamental insight from TAHTO's evaluation is that security and "
-  "performance are not inherently opposed in edge offloading: they only appear "
-  "so when security is implemented as a binary (trust/distrust) switch. "
-  "TAHTO's continuous trust scoring, hard gate, and adaptive escalation "
-  "create a smooth operating envelope: in safe conditions (S1\u2013S4), "
-  "TAHTO is identical to the performance-optimal B1; under attack (S5, S6), "
-  "it gracefully degrades to the cloud fallback while maintaining correctness.")
-
+SSH("A.  Security-Performance Continuum")
+B("TAHTO demonstrates that security and performance are not inherently opposed "
+  "in edge offloading. In safe conditions (S1\u2013S4), TAHTO's composite score "
+  "degenerates to performance-optimal routing (trust gate excludes nothing). "
+  "Under attack, it gracefully shifts towards the trusted cloud while maintaining "
+  "correct task completion. The 50% cloud escalation in S6 is not a failure "
+  "but the correct adaptive response: only 1 of 5 nodes is both trusted and "
+  "operational in that scenario.")
 SSH("B.  The S6 Residual Miss Rate")
-B("TAHTO's 1.92% missed avoidance in S6 requires careful interpretation. "
-  "It does not indicate a fundamental TAHTO vulnerability. The miss is entirely "
-  "concentrated in the first one or two monitoring windows after the t=20 s "
-  "delayed attack onset, before the online model has accumulated post-onset "
-  "telemetry for retraining. Once sufficient attacked-state data enters the "
-  "training set (typically within 50\u2013100 tasks after onset), trust scores "
-  "for the malicious nodes drop below 0.50 and the gate excludes them completely. "
-  "A shorter monitoring window (smaller UPDATE_EVERY) would reduce this onset "
-  "latency at the cost of more frequent retraining computation.")
-
-SSH("C.  Regulatory and Standards Alignment")
-B("TAHTO's design aligns with three key regulatory frameworks: "
-  "(1) NIST Zero-Trust (SP 800-207) [6]: continuous per-node verification "
-  "without implicit trust, with revocable access based on dynamic assessment. "
-  "(2) HIPAA Minimum Necessary Rule: sensitivity-based routing (Gate 2) "
-  "ensures High-sensitivity patient data (cardiac rhythm, medication dosage) "
-  "is only processed by nodes meeting the stricter T_high=0.70 threshold. "
-  "(3) GDPR Accountability (Art. 5(2)): the accumulated trust score history "
-  "and per-window evaluation records provide a timestamped audit trail "
-  "demonstrating due diligence in data routing decisions.")
-
+B("TAHTO's 1.92% miss in S6 is entirely concentrated in the one or two "
+  "monitoring windows immediately after t=20\u202fs attack onset, before "
+  "Algorithm\u202f1 has retrained on post-onset labelled data. Once post-onset "
+  "telemetry enters the training set (\u224850\u2013100 tasks after onset), "
+  "trust scores for malicious nodes drop below 0.50 and the gate excludes "
+  "them completely. A smaller UPDATE_EVERY reduces onset latency at the "
+  "cost of more frequent retraining computation.")
+SSH("C.  Regulatory Alignment")
+B("TAHTO aligns with three frameworks: (1)\u202fNIST Zero-Trust (SP\u202f800-207) [6]: "
+  "continuous per-node verification, no implicit trust. (2)\u202fHIPAA Minimum "
+  "Necessary Rule: Gate\u202f2 ensures High-sensitivity tasks reach only nodes "
+  "with T(n)\u202f>\u202f0.70. (3)\u202fGDPR Accountability (Art.\u202f5(2)): "
+  "per-window trust score history provides a timestamped audit trail.")
 SSH("D.  Limitations and Future Work")
-B("The current evaluation uses synthetic simulation data calibrated to "
-  "published benchmarks [2, 3]. Key limitations to address in future work: "
-  "(1) Real-world IoMT traces: validation against clinical sensor data "
-  "with realistic task arrival patterns and network conditions. "
-  "(2) Transmission-layer threats: extending the threat model to include "
-  "man-in-the-middle attacks and eavesdropping on the device-to-edge link. "
-  "(3) Federated trust learning [8]: training trust models collaboratively "
-  "across multiple clinical sites without sharing patient data, addressing "
-  "the data-privacy constraint inherent in centralised training. "
-  "(4) Hardware deployment: validation on real edge hardware "
-  "(Raspberry Pi 4, NVIDIA Jetson) to confirm the sub-25 \u00b5s overhead "
-  "claim under realistic OS scheduling jitter.")
+B("Key limitations: (1)\u202fSynthetic simulation data, calibrated to "
+  "published benchmarks [2, 3]; validation against real-world IoMT traces needed. "
+  "(2)\u202fTransmission-layer attacks (MITM, eavesdropping) are out of scope. "
+  "(3)\u202fFederated trust learning [8] across clinical sites without sharing "
+  "patient data. (4)\u202fHardware validation on Raspberry Pi / NVIDIA Jetson "
+  "to confirm the <25\u202f\u00b5s overhead claim under OS jitter.")
 
-# ═══════════════════════ VIII. CONCLUSION ═══════════════════════════════════
+# ─── VIII. CONCLUSION ────────────────────────────────────────────────────────
 SH("VIII.  Conclusion")
 B("This paper presented TAHTO, a Trust-Aware Hybrid Task Offloading framework "
-  "designed for secure IoMT edge-cloud healthcare systems. TAHTO addresses "
-  "the fundamental gap in existing offloading frameworks: the implicit assumption "
-  "that edge nodes are trustworthy. By continuously predicting node "
-  "trustworthiness from real-time telemetry using an online-adaptive XGBoost "
-  "classifier, integrating trust into a min-max-normalised multi-objective "
-  "scheduling function, and triggering adaptive cloud escalation under trust "
-  "gate failure or queue saturation, TAHTO achieves security without "
-  "sacrificing edge resource efficiency in safe deployment conditions.")
-B(f"Evaluated across six adversarial scenarios over {N_SEEDS} independent seeds, "
-  "TAHTO achieves 99.78% malicious-node avoidance in pure-attack conditions "
-  "and 98.08% in the combined worst-case scenario where 40% of active nodes "
-  "are simultaneously Byzantine — compared to 69.5% for both the "
-  "performance-only and static-reputation baselines. Scheduling overhead "
-  "remains below 25 \u00b5s per task. Weight sensitivity analysis confirms that "
-  "the hard trust gate — not the scoring weights — is the dominant security "
-  "mechanism, making TAHTO robust to imprecise weight tuning in deployment.")
-B("The fully reproducible open-source Python simulation codebase provides "
-  "a rigorously validated foundation for future hardware deployment, "
-  "federated trust learning, and integration with real-world IoMT telemetry "
-  "pipelines.")
+  "for secure IoMT edge-cloud healthcare systems. By continuously predicting "
+  "edge-node trustworthiness via an online-adaptive XGBoost classifier and "
+  "integrating trust into a min-max-normalised multi-objective scheduling "
+  "function with adaptive cloud escalation, TAHTO prevents sensitive medical "
+  "workloads from reaching compromised nodes without sacrificing edge efficiency "
+  "in safe conditions.")
+B(f"Evaluated across six adversarial scenarios over {N_SEEDS} seeds, TAHTO "
+  "achieves 99.78% malicious-node avoidance in pure-attack conditions and "
+  "98.08% in the combined worst-case scenario\u2014vs.\u202f69.5% for all "
+  "non-cloud-only baselines. Scheduling overhead remains below 25\u202f\u00b5s. "
+  "Weight sensitivity analysis confirms the hard trust gate is the dominant "
+  "security mechanism, making TAHTO robust to imprecise weight tuning. "
+  "The open-source codebase provides a validated foundation for hardware "
+  "deployment, federated trust learning, and real-world IoMT trace validation.")
 
-# ═════════════════════════ REFERENCES ════════════════════════════════════════
+# ─── REFERENCES ──────────────────────────────────────────────────────────────
 SH("References")
-REFS = [
-    '[1]  S. M. R. Islam, D. Kwak, M. H. Kabir, M. Hossain, and K.-S. Kwak, "The Internet of Things for Health Care: A Comprehensive Survey," IEEE Access, vol. 3, pp. 678-708, 2015.',
-    '[2]  X. Chen, L. Jiao, W. Li, and X. Fu, "Efficient Multi-User Computation Offloading for Mobile-Edge Cloud Computing," IEEE/ACM Transactions on Networking, vol. 24, no. 5, pp. 2739-2750, Oct. 2016.',
-    '[3]  Y. Mao, C. You, J. Zhang, K. Huang, and K. B. Letaief, "A Survey on Mobile Edge Computing: The Communication Perspective," IEEE Communications Surveys & Tutorials, vol. 19, no. 4, pp. 2322-2358, 2017.',
-    '[4]  R. Khan, P. Kumar, D. N. K. Jayakody, and M. Liyanage, "A Survey on Security and Privacy of 5G Technologies: Potential Solutions, Recent Advancements, and Future Directions," IEEE Communications Surveys & Tutorials, vol. 22, no. 1, pp. 196-248, 2020.',
-    '[5]  N. Neshenko, E. Bou-Harb, J. Crichigno, G. Kaddoum, and N. Ghani, "Demystifying IoT Security: An Exhaustive Survey on IoT Vulnerabilities and a First Empirical Look on Internet-Scale IoT Exploitations," IEEE Communications Surveys & Tutorials, vol. 21, no. 3, pp. 2702-2733, 2019.',
-    '[6]  S. Rose, O. Borchert, S. Mitchell, and S. Connelly, "Zero Trust Architecture," National Institute of Standards and Technology, Special Publication 800-207, Aug. 2020.',
-    '[7]  J. Zhang, X. Chen, Y. Xiang, W. Zhou, and J. Wu, "Robust Network Intrusion Detection with Combined Statistical Analysis and Machine Learning," IEEE Transactions on Information Forensics and Security, vol. 16, pp. 217-232, 2021.',
-    '[8]  D. C. Nguyen, M. Ding, P. N. Pathirana, A. Seneviratne, J. Li, and H. V. Poor, "Federated Learning for Internet of Things: A Comprehensive Survey," IEEE Communications Surveys & Tutorials, vol. 23, no. 3, pp. 1622-1658, 2021.',
+for ref in [
+    '[1]  S. M. R. Islam et al., "The Internet of Things for Health Care: A Comprehensive Survey," IEEE Access, vol. 3, pp. 678-708, 2015.',
+    '[2]  X. Chen, L. Jiao, W. Li, and X. Fu, "Efficient Multi-User Computation Offloading for Mobile-Edge Cloud Computing," IEEE/ACM Trans. Networking, vol. 24, no. 5, pp. 2739-2750, Oct. 2016.',
+    '[3]  Y. Mao, C. You, J. Zhang, K. Huang, and K. B. Letaief, "A Survey on Mobile Edge Computing: The Communication Perspective," IEEE Commun. Surveys Tuts., vol. 19, no. 4, pp. 2322-2358, 2017.',
+    '[4]  R. Khan et al., "A Survey on Security and Privacy of 5G Technologies," IEEE Commun. Surveys Tuts., vol. 22, no. 1, pp. 196-248, 2020.',
+    '[5]  N. Neshenko et al., "Demystifying IoT Security: An Exhaustive Survey on IoT Vulnerabilities," IEEE Commun. Surveys Tuts., vol. 21, no. 3, pp. 2702-2733, 2019.',
+    '[6]  S. Rose, O. Borchert, S. Mitchell, and S. Connelly, "Zero Trust Architecture," NIST Special Publication 800-207, Aug. 2020.',
+    '[7]  J. Zhang et al., "Robust Network Intrusion Detection with Combined Statistical Analysis and Machine Learning," IEEE Trans. Inf. Forensics Security, vol. 16, pp. 217-232, 2021.',
+    '[8]  D. C. Nguyen et al., "Federated Learning for Internet of Things: A Comprehensive Survey," IEEE Commun. Surveys Tuts., vol. 23, no. 3, pp. 1622-1658, 2021.',
     '[Base]  S. Khan, S. Liu, L. Pan, and G. Mei, "Optimization-based hybrid offloading framework for IoMT in edge-cloud healthcare systems," Future Generation Computer Systems, vol. 176, p. 108163, Mar. 2026.',
-]
-for ref in REFS:
+]:
     REF(ref)
 
-# ─────────────────────────────────────────────────────────────────────────────
+# ─── SAVE ────────────────────────────────────────────────────────────────────
 doc.save(str(OUT))
-print(f"\n✅  Saved: {OUT}")
-print(f"    {sum(1 for p in doc.paragraphs if p.text.strip()):>4d} paragraphs")
-print(f"    {sum(len(p.text.split()) for p in doc.paragraphs):>4d} words")
-print(f"    {len(doc.inline_shapes):>4d} embedded figures")
-print(f"    Results pulled live from {N_SEEDS}-seed experiment")
+paras = [p.text.strip() for p in doc.paragraphs if p.text.strip()]
+print(f"\n\u2705  Saved: {OUT}")
+print(f"    {len(paras):>4d} paragraphs | {sum(len(p.split()) for p in paras):>5d} words "
+      f"| {len(doc.inline_shapes):>2d} figures embedded")
+print("    Diagrams: arch_three_tier.png (Fig.1) | arch_trust_pipeline.jpeg (Fig.2) | arch_scenarios.jpeg (Fig.3)")
+print("    Tables  : properly column-width-controlled with header shading + row striping")
 print("    Fill in [Author Name] and affiliation before submission.")
